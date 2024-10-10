@@ -1,0 +1,70 @@
+#!/bin/bash
+
+usage() {
+    echo "Usage: $0 -h <host> [-s <share>] [-u <username>] [-p <password>] [--get-all] [--put-all] [-c <commands>]"
+    exit 1
+}
+
+get_all=false
+put_all=false
+
+while [[ "$1" != "" ]]; do
+    case $1 in
+        -h) shift
+            host="$1"
+            ;;
+        -s) shift
+            share="$1"
+            ;;
+        -u) shift
+            username="$1"
+            ;;
+        -p) shift
+            password="$1"
+            ;;
+        --get-all) get_all=true
+            ;;
+        --put-all) put_all=true
+            ;;
+        -c) shift
+            commands="$1"
+            ;;
+        *) usage
+            ;;
+    esac
+    shift
+done
+
+if [ -z "$host" ]; then
+    echo "Host is required."
+    usage
+fi
+
+if [ -z "$username" ]; then
+    username=""
+fi
+
+if [ -z "$password" ]; then
+    if [ -n "$username" ]; then
+        password=""
+    else
+        username="guest"
+        password=""
+    fi
+fi
+
+if [ -z "$share" ]; then
+    smb_command="smbclient -L //$host -U $username%$password"
+else
+    smb_command="smbclient //$host/$share -U $username%$password"
+fi
+
+if [ "$get_all" = true ]; then
+    smb_command="$smb_command -c 'prompt off; recurse on; mget *'"
+elif [ "$put_all" = true ]; then
+    smb_command="$smb_command -c 'prompt off; recurse on; mput *'"
+elif [ -n "$commands" ]; then
+    smb_command="$smb_command -c '$commands'"
+fi
+
+eval $smb_command

@@ -1,0 +1,101 @@
+#!/bin/bash
+
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+YELLOW_BOLD='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+echo -e "\n\n${YELLOW_BOLD}"
+echo -e "    __  __    _    ____ ____  __  __    _    ____  "
+echo -e "   |  \/  |  / \  / ___/ ___||  \/  |  / \  |  _ \ "
+echo -e "   | |\/| | / _ \ \___ \___ \| |\/| | / _ \ | |_) |"
+echo -e "   | |  | |/ ___ \ ___) |__) | |  | |/ ___ \|  __/ "
+echo -e "   |_|  |_/_/   \_\____/____/|_|  |_/_/   \_\_|    "
+echo -e "${NC}\n\n\n"
+
+ping_check() {
+    ping -c 1 -W 1 $1 > /dev/null 2>&1
+    return $?
+}
+
+if [ -z "$1" ]; then
+    echo -e "${RED}Usage: $0 <target-ip> [-Pn] [--force]${NC}"
+    exit 1
+fi
+
+TARGET_IP=$1
+PN_FLAG=""
+FORCE_FLAG=false
+
+for arg in "$@"; do
+    case $arg in
+        -Pn)
+            PN_FLAG="-Pn"
+            ;;
+        --force)
+            FORCE_FLAG=true
+            ;;
+    esac
+done
+
+if ! $FORCE_FLAG; then
+    echo -e "${CYAN}Pinging $TARGET_IP to check connectivity...${NC}"
+    if ping_check $TARGET_IP; then
+        echo -e "${GREEN}Ping successful: $TARGET_IP is reachable.${NC}\n"
+    else
+        echo -e "${RED}Ping failed: Unable to reach $TARGET_IP. Use --force to skip this check.${NC}"
+        exit 1
+    fi
+fi
+
+NMAP_OUTPUT_DIR="nmap"
+mkdir -p "$NMAP_OUTPUT_DIR"
+
+echo -e "${GREEN}Running initial nmap scan on $TARGET_IP...${NC}"
+
+nmap $PN_FLAG -p- -T4 --open --stats-every 5s $TARGET_IP > "$NMAP_OUTPUT_DIR/nmap_initial_output.txt" &
+NMAP_PID=$!
+
+tail --pid=$NMAP_PID -f "$NMAP_OUTPUT_DIR/nmap_initial_output.txt" |
+grep --line-buffered -E 'Stats:|SYN Stealth Scan Timing' |
+awk '/Stats:/ {elapsed=$2} /SYN Stealth Scan Timing/ {printf "  \033[0;36mInitial Scan: %s elapsed, %s %s done.\033[0m\n", elapsed, $5, $6}'
+
+OPEN_PORTS=$(grep '/tcp' "$NMAP_OUTPUT_DIR/nmap_initial_output.txt" | awk '{print $1}' | cut -d'/' -f1 | tr '\n' ',' | sed 's/,$//')
+
+if [ -z "$OPEN_PORTS" ]; then
+    echo -e "${RED}No open ports found on $TARGET_IP.${NC}"
+    exit 0
+fi
+
+echo -e "${YELLOW_BOLD}Open ports found: $OPEN_PORTS${NC}\n"
+
+echo -e ""
+
+echo -e "${GREEN}Running detailed nmap scan on $TARGET_IP with open ports...${NC}"
+
+nmap $PN_FLAG -sV -sC -A -p$OPEN_PORTS --stats-every 5s -T4 -oA "$NMAP_OUTPUT_DIR/$TARGET_IP" $TARGET_IP > "$NMAP_OUTPUT_DIR/nmap_detailed_output.txt" &
+NMAP_PID=$!
+
+tail --pid=$NMAP_PID -f "$NMAP_OUTPUT_DIR/nmap_detailed_output.txt" |
+grep --line-buffered -E 'Stats:|Service scan Timing' |
+awk '/Stats:/ {elapsed=$2} /Service scan Timing/ {printf "  \033[0;36mDetailed Scan: %s elapsed, About %s done.\033[0m\n", elapsed, $5, $6}'
+
+echo -e "\n${GREEN}Nmap scan completed. Results saved to ${NMAP_OUTPUT_DIR}${NC}\n"
+
+awk '
+{
+    if ($2 == "open") {
+        printf "\033[0;36m\033[1;33m%s\033[0m %s ", $1, $2;
+        for (i = 3; i <= NF; i++) {
+            if (i == 3 || i == NF || ($i ~ /^[A-Za-z]/ && i != NF)) {
+                printf "\033[1;33m%s\033[0m ", $i;
+            } else {
+                printf "%s ", $i;
+            }
+        }
+        print "\033[0m"
+    } else {
+        print "\033[0;36m"$0"\033[0m"
+    }
+}' "$NMAP_OUTPUT_DIR/$TARGET_IP.nmap"

@@ -1,0 +1,99 @@
+#!/bin/bash
+
+blue='\033[1;34m'
+reset='\033[0m'
+
+banner="\n${blue}
+  ██████████╗   █████████╗███████╗██████╗█████╗███╗   ██╗
+  ██╔════████╗ ██████╔══████╔════██╔════██╔══██████╗  ██║
+  █████████╔████╔████████╔█████████║    █████████╔██╗ ██║
+  ╚════████║╚██╔╝████╔══██╚════████║    ██╔══████║╚██╗██║
+  █████████║ ╚═╝ ████████╔███████╚████████║  ████║ ╚████║
+  ╚══════╚═╝     ╚═╚═════╝╚══════╝╚═════╚═╝  ╚═╚═╝  ╚═══╝
+${reset}"
+
+echo -e "$banner"
+
+username=""
+password=""
+host=""
+report=""
+
+while getopts "u:p:h:" opt; do
+  case $opt in
+    u) username="$OPTARG" ;;
+    p) password="$OPTARG" ;;
+    h) host="$OPTARG" ;;
+    *) echo "Usage: $0 [-u username] [-p password] [-h host]" >&2; exit 1 ;;
+  esac
+done
+
+if [ -z "$host" ]; then
+  echo "Error: Host must be specified with -h option." >&2
+  exit 1
+fi
+
+if [ -z "$username" ]; then
+  auth="-N"
+else
+  if [ -z "$password" ]; then
+    password=""
+  fi
+  auth="-U $username%$password"
+fi
+
+shares=$(smbclient -L "$host" $auth 2>/dev/null | awk '/^\t/ {print $1}')
+if [ $? -ne 0 ]; then
+  echo "Error: Failed to list shares on host $host." >&2
+  exit 1
+fi
+
+if [ -z "$shares" ]; then
+  echo "No accessible shares found."
+  exit 0
+fi
+
+cyan='\033[96m'
+red_bold='\033[1;31m'
+yellow_bold='\033[1;33m'
+green_bold='\033[1;32m'
+
+for share in $shares; do
+  if [[ "$share" == "Sharename" || "$share" == "---------"
+     || "$share" == "Server" || "$share" == "Workgroup"
+     || "$share" == "" ]]; then
+    continue
+  fi
+
+  access="NO_ACCESS"
+  
+  if smbclient "//$host/$share" $auth -c "ls" >/dev/null 2>&1; then
+    access="READ_ONLY"
+    
+    echo "Test file content" | smbclient "//$host/$share" $auth -c "put /dev/stdin testfile.txt" >/dev/null 2>&1
+    
+    if smbclient "//$host/$share" $auth -c "ls testfile.txt" >/dev/null 2>&1; then
+      access="READ/WRITE"
+      
+      smbclient "//$host/$share" $auth -c "del testfile.txt" >/dev/null 2>&1
+    fi
+  fi
+  
+  if [ "$access" == "NO_ACCESS" ]; then
+    report+="    ${cyan}${share}${reset}: ${red_bold}${access}${reset}\n"
+  elif [ "$access" == "READ_ONLY" ]; then
+    report+="    ${cyan}${share}${reset}: ${yellow_bold}${access}${reset}\n"
+  elif [ "$access" == "READ/WRITE" ]; then
+    report+="    ${cyan}${share}${reset}: ${green_bold}${access}${reset}\n"
+  fi
+
+done
+
+report_file="${host}_smb.scan"
+
+output="\n\n\t${blue}----------RESULTS----------${reset}\n${report}"
+
+echo -e "$output" > "$report_file"
+
+echo -e "$output"
+echo "Report saved to $report_file"
