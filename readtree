@@ -1,0 +1,2 @@
+#!/bin/bash
+tree . -fs | grep -v 4096 | grep -o '\./.*' | xargs -I {} sh -c 'echo "File: {}"; cat "{}"'
